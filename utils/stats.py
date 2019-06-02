@@ -26,7 +26,7 @@ def build_corr_mat(corrs, p_vals, labels, title, alpha):
     plt.imshow(corrs)
     for i in range(len(labels)):
         for j in range(len(labels)):
-            text = "{0:.2f}".format(r_corrs[i, j])
+            text = "{0:.2f}".format(corrs[i, j])
             p = p_vals[i,j]
             if p < alpha:
                 text = text + "*"
