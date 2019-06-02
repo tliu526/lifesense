@@ -12,7 +12,7 @@ import datetime
 
 #### CONSTANTS ####
 
-base_path = "./CS120/CS120-sensor-csvs/"
+base_path = "CS120/CS120-sensor-csvs/"
 id_dirs = os.listdir(base_path)
 
 csv_files = {
@@ -64,7 +64,11 @@ def get_screener_df():
     """
     screener_df = pd.read_csv('CS120/CS120Clinical/CS120Final_Screener.csv', encoding = "ISO-8859-1")
     screener_df = screener_df[['ID', 'score_PHQ', 'score_GAD', 'CONTROL', 'ANXIOUS', 'DEPRESSED', 'DEPRESSED_ANXIOUS']]
+    
+    group_cols = ['CONTROL', 'ANXIOUS', 'DEPRESSED', 'DEPRESSED_ANXIOUS'] 
+    screener_df[group_cols] = screener_df[group_cols].fillna(0)
     screener_df = screener_df.rename(index=str, columns={'ID': 'pid'})
+    
     return screener_df
 
 
@@ -81,6 +85,7 @@ def process_date_daily(df, pid):
     df = convert_col_to_day(df, 'timestamp', 'date', unit='s')
     
     return df
+
 
 def process_date_hourly(df, pid, freq="8H"):
     """
