@@ -3,12 +3,17 @@ A collection of data processing utilities for the CS120 dataset.
 
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import pearsonr, spearmanr
 import os
 import datetime
+
+
+from haversine import haversine
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from scipy.stats import pearsonr, spearmanr
+from sklearn.cluster import KMeans
 
 #### CONSTANTS ####
 
@@ -219,9 +224,11 @@ def process_csv_all_hourly(csv_name, freq="8H", **kwargs):
     df_all = df_all.dropna(axis=1, how='all')
     return df_all
 
+
 def process_csv_all_raw(csv_name, **kwargs):
     """
     Aggregates all of the dataframes for the given csv name into a single dataframe, with dates untransformed.
+    TODO needs to be corrected
     """
     df_all = pd.DataFrame(columns=['pid'] + csv_headers[csv_name])
     win_dict = build_emm_win_dict(window_size=window_size)
@@ -240,6 +247,7 @@ def process_csv_all_raw(csv_name, **kwargs):
                 df_all = df_all.append(df_window)
     df_all = df_all.dropna(axis=1, how='all')
     return df_all
+
 
 def process_wtr(wtr_df, pid):
     """
@@ -321,6 +329,7 @@ def process_tch(tch_df, pid):
     
     return tch_df[['pid', 'date', 'touch_count']]
 
+
 def process_ems(ems_df, pid, normalize=False):
     """
     Processes the ems.csv, grouping and merging on 'pid' and 'date'.
@@ -340,6 +349,7 @@ def process_ems(ems_df, pid, normalize=False):
     ems_df = ems_df.groupby(['pid', 'date'], as_index=False).mean()
     #ems_df = ems_df.drop_duplicates(subset=['date']) # drop duplicate dates or average them?
     return ems_df[['pid', 'date', 'sleep_quality', 'sleep_amount']]
+
 
 def process_coe(coe, pid):
     """
@@ -448,3 +458,57 @@ def process_act(act, pid, confidence=50):
     act = act.reset_index()
 
     return act
+
+
+def process_fus(fus, cluster_radius=0.2):
+    """Processes the fus.csv, grouping and merging on 'pid' and 'date.'
+
+    Args:
+        cluster_radius (float): the stationary cluster radius, in km
+    Assumes date, pid columns are populated
+    """
+    
+    # get stationary locations
+    fus['prev_lat'] = fus['latitude'].shift()
+    fus['prev_long'] = fus['longitude'].shift()
+    fus['dist'] = fus.apply(lambda x: haversine((x.latitude, x.longitude), (x.prev_lat, x.prev_long)), axis=1) # in km
+    fus['prev_timestamp'] = fus['timestamp'].shift()
+    fus['delta_timestamp'] = ((fus['timestamp'] - fus['prev_timestamp']).dt.total_seconds() / (60 * 60)).astype(float) # change to hours
+    fus['velocity'] = fus['dist'] / fus['delta_timestamp']
+    fus['stationary'] = fus['velocity'] < 1
+    fus_stationary = fus[fus['stationary']]
+    
+    loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
+
+    # assign clusters
+    cur_mean = 1
+    cur_clusters = 0
+    while cur_mean > cluster_radius:
+        cur_clusters += 1
+        X = fus_stationary[['latitude', 'longitude']]
+        kmeans = KMeans(n_clusters=cur_clusters, random_state=0).fit(X)
+        transform_X = kmeans.transform(X)
+        labels = kmeans.labels_
+        clusters = kmeans.cluster_centers_
+        X = X.reset_index(drop=True)
+        X['labels'] = labels
+        X['center'] = X.apply(lambda x: clusters[int(x.labels)], axis=1)
+        X['dist'] = X.apply(lambda x: haversine((x.latitude, x.longitude), x.center), axis=1)
+        cur_mean = X['dist'].mean()
+    
+    # get daily entropy
+    fus_stationary = fus_stationary.reset_index(drop=True)
+    fus_stationary['cluster'] = X['labels']
+    label_group = fus_stationary.groupby(['date', 'cluster'])['delta_timestamp'].sum().unstack()
+    label_group = label_group.fillna(0)
+    label_group['total'] = label_group.sum(axis=1)
+    label_group = label_group.div(label_group['total'], axis=0)
+    label_group['entropy'] = -(np.log(label_group) * label_group).sum(axis=1)
+    label_group = label_group.reset_index()
+    
+    fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
+    fus_combined = pd.merge(fus_combined, label_group[['date', 'entropy']], on='date', how='outer')
+    fus_combined['cluster'] = cur_clusters
+    fus_combined['loc_var'] = loc_var
+    
+    return fus_combined
