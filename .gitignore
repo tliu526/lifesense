@@ -4,4 +4,5 @@ CS120/*
 utils/__pycache__/*
 pkl/*
 *#
-PassiveDataKit-Client-Python/*
+data_pull/*
+data/*
