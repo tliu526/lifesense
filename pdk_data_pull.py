@@ -185,5 +185,46 @@ for id in testwave_ids:
     
     pickle.dump(loc_df, open("data_pull/pdk-location/{}.df".format(id), 'wb'), -1)
 
-
 #%%
+# pull and dump locations for test_wave ids
+testwave_ids = []
+with open("data_pull/test_wave_ids.txt", "rb") as testwave_f:
+    for line in testwave_f.readlines():
+        testwave_ids.append(line.strip())
+
+for id in testwave_ids:
+    print(id)
+    location_query = query.filter(source=id, generator_identifier='pdk-location').order_by('created')
+    
+    loc_df = pd.DataFrame()
+    for point in location_query:
+        point_df = pd.DataFrame.from_dict(point).iloc[0].to_frame().transpose()
+        metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+        metadata_df = metadata_df.drop(['latitude', 'longitude'], axis='columns')
+        point_df.reset_index(inplace=True, drop=True)
+        point_df = pd.concat([metadata_df, point_df], axis=1, sort=True)
+        
+        point_df.drop('passive-data-metadata', axis='columns', inplace=True)
+        #print("pre missing cols:{}".format(point_df.shape[1]))
+        missing_cols = [col for col in loc_df.columns.values if col not in point_df.columns.values]
+        #print(missing_cols)
+        
+        if len(missing_cols) > 0 and loc_df.shape[0] > 0:
+            for col in missing_cols:
+                point_df[col] = np.nan
+            point_df = point_df[loc_df.columns]
+        
+        #print("post-missing cols:{}".format(point_df.shape[1]))
+
+        
+        loc_df = loc_df.append(point_df)
+
+        
+    loc_df['pid'] = id 
+    loc_df['data_source'] = 'test_wave'
+    print(loc_df.shape)
+    #display(loc_df.head())
+    
+    pickle.dump(loc_df, open("data_pull/pdk-location/{}.df".format(id), 'wb'), -1)
+
+
