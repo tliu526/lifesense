@@ -1,0 +1,178 @@
+#%% [markdown]
+# # PDK Client Data Pull
+# Notebook for PDK client manipulation
+
+#%% 
+# imports and constants
+
+import json
+import pickle
+
+import numpy as np
+import pandas as pd
+
+from pdk_client import PDKClient
+from IPython.display import display, HTML
+
+SITE_URL = "https://lifesense.fsm.northwestern.edu/data"
+TOKEN = "oCZUlrEtmlJRsy9b8fOpNTthlMPT7kU6GcniFLt0yLH4Yz0ExkGeflPuaPlOwCyj"
+PAGE_SIZE = 100
+
+#%% test cell for filtered query object
+
+id = '29878406'
+client = PDKClient(site_url=SITE_URL, token=TOKEN)
+query = client.query_data_points(page_size=PAGE_SIZE, source=id)
+query.count()
+
+#%% test cell for evening EMA processing
+ema_query = query.filter( generator_identifier='evening_ema').order_by('created')
+ema_df = pd.DataFrame()
+point = ema_query.first()
+ema_df = ema_df.append(pd.DataFrame.from_dict(point).iloc[0])
+
+display(ema_df[ema_df.columns[ema_df.columns.str.startswith('place')]].head())
+
+ema_df.head()
+
+#%% test cell for morning EMA processing
+ema_query = query.filter(generator_identifier='morning_ema').order_by('created')
+
+point = ema_query.first()
+ema_df = pd.DataFrame()
+
+ema_df = ema_df.append(pd.DataFrame.from_dict(point).iloc[0])
+
+metadata_dict = point['passive-data-metadata'] 
+
+metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+ema_df.reset_index(inplace=True, drop=True)
+full_df = pd.concat([metadata_df, ema_df], axis=1)
+full_df.drop('passive-data-metadata', axis='columns', inplace=True)
+display(full_df)
+
+#%%
+# processing functions
+
+def process_generators(ids, generators, data_source):
+    """Processes the data for the given generators and ids.
+
+    Dumps the resulting DataFrames into pickled files.
+
+    Args:
+        query: a PDKPointQuery object, TODO fix
+        ids: list of ids to query
+        generators: list of generators to pull
+        data_source: str indicating which group the ids belong to
+
+    """
+    for id in ids:
+        print(id)
+        query = client.query_data_points(page_size=PAGE_SIZE, source=id)
+        for gen_id in generators:
+            ema_query = query.filter(source=id, generator_identifier=gen_id).order_by('created')
+            
+            ema_df = pd.DataFrame()
+            for point in ema_query:
+                point_df = pd.DataFrame.from_dict(point).iloc[0].to_frame().transpose()
+                metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+                point_df.reset_index(inplace=True, drop=True)
+                point_df = pd.concat([metadata_df, point_df], axis=1, sort=True)
+                
+                point_df.drop('passive-data-metadata', axis='columns', inplace=True)
+
+                ema_df = ema_df.append(point_df)
+
+            ema_df['pid'] = id 
+            ema_df['data_source'] = data_source
+            ema_df = ema_df.reset_index(drop=True)
+            print(ema_df.shape)
+            #display(ema_df.head())
+            pickle.dump(ema_df, open("data_pull/{}/{}.df".format(gen_id, id), 'wb'), -1)
+
+
+#%% 
+# process morning/evening EMA for wave 1
+
+testwave_ids = []
+with open("data_pull/wave1_ids.txt", "rb") as testwave_f:
+    for line in testwave_f.readlines():
+        testwave_ids.append(line.strip())
+
+generators = ['morning_ema', 'evening_ema', 'morning_phq8', 'evening_phq8']
+process_generators(testwave_ids, generators, 'wave1')
+
+#%% test cell for location
+location_query = query.filter(generator_identifier='pdk-location').order_by('created')
+
+first_loc_point = location_query.first()
+loc_df = pd.DataFrame()
+for loc in location_query:
+    loc_df = loc_df.append(pd.read_json(json.dumps(loc)).iloc[0])
+    break
+
+print(loc_df.shape)
+display(loc_df.head())
+
+#%% pull and dump locations for wave 1 ids
+testwave_ids = []
+with open("data_pull/wave1_ids.txt", "rb") as testwave_f:
+    for line in testwave_f.readlines():
+        testwave_ids.append(line.strip())
+
+for id in testwave_ids:
+    print(id)
+    query = client.query_data_points(page_size=PAGE_SIZE, source=id)
+    location_query = query.filter(source=id, generator_identifier='pdk-location').order_by('created')
+    
+    loc_df = pd.DataFrame()
+    for point in location_query:
+        point_df = pd.DataFrame.from_dict(point).iloc[0].to_frame().transpose()
+        metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+        metadata_df = metadata_df.drop(['latitude', 'longitude'], axis='columns')
+        point_df.reset_index(inplace=True, drop=True)
+        point_df = pd.concat([metadata_df, point_df], axis=1, sort=True)
+        
+        point_df.drop('passive-data-metadata', axis='columns', inplace=True)
+        #print("pre missing cols:{}".format(point_df.shape[1]))
+        missing_cols = [col for col in loc_df.columns.values if col not in point_df.columns.values]
+        #print(missing_cols)
+        
+        if len(missing_cols) > 0 and loc_df.shape[0] > 0:
+            for col in missing_cols:
+                point_df[col] = np.nan
+            point_df = point_df[loc_df.columns]
+        
+        #print("post-missing cols:{}".format(point_df.shape[1]))
+
+        
+        loc_df = loc_df.append(point_df)
+
+        
+    loc_df['pid'] = id 
+    loc_df['data_source'] = 'wave1'
+    print(loc_df.shape)
+    #display(loc_df.head())
+    
+    pickle.dump(loc_df, open("data_pull/pdk-location/{}.df".format(id), 'wb'), -1)
+
+#%% test cell for communication
+screen_query = query.filter(generator_identifier='pdk-text-messages').order_by('created')
+
+point = screen_query.first()
+screen_df = pd.DataFrame()
+
+screen_df = screen_df.append(pd.DataFrame.from_dict(point).iloc[0])
+
+metadata_dict = point['passive-data-metadata'] 
+
+metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+screen_df.reset_index(inplace=True, drop=True)
+full_df = pd.concat([metadata_df, screen_df], axis=1)
+full_df.drop('passive-data-metadata', axis='columns', inplace=True)
+display(full_df)
+full_df.shape
+
+#%% process communication and screen state
+generators = ['pdk-phone-calls', 'pdk-text-messages', 'pdk-screen-state']
+process_generators(testwave_ids, generators, 'wave1')
