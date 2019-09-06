@@ -1,11 +1,13 @@
 """
-Offline script for PDK data pull
+Python script for PDK data pull.
+
+Requires python 2.7, for the pdk_client module
+
 """
 import argparse
 import json
-import pickle
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from functools import partial
 from multiprocessing import Pool
 
@@ -14,11 +16,7 @@ import pandas as pd
 
 from pdk_client import PDKClient
 
-# client setup
-SITE_URL = "https://lifesense.fsm.northwestern.edu/data"
-TOKEN = "oCZUlrEtmlJRsy9b8fOpNTthlMPT7kU6GcniFLt0yLH4Yz0ExkGeflPuaPlOwCyj"
-PAGE_SIZE = 100
-client = PDKClient(site_url=SITE_URL, token=TOKEN)
+DATE_FMT = "%Y-%m-%d"
 
 generators = [
     'pdk-system-status',
@@ -63,36 +61,72 @@ def get_data_counts(id, generators, start_date, end_date):
     return count_dict
 
 def process_counts(id, start_date, end_date, out_dir):
-    """Processes counts for the given id over the date range.
+    """Processes counts for the given id over the date range
 
     Dumps the resulting DataFrame into the specified directory.
 
-    TODO actually implement the above parameters
+    Args:
+        id (str): the participant id to pull
+        start_date (str): the start date in yyyy-mm-dd form
+        end_date (str): the start date in yyyy-mm-dd form
+        out_dir (str): the name of the output directory
 
+    Returns:
+        None
     """
     id_df = pd.DataFrame()
     print(id)
-    start_date = date(2019, 8, 23)
-    end_date = date(2019, 8, 24)
+    start_date = datetime.strptime(start_date, DATE_FMT)
+    end_date = datetime.strptime(end_date, DATE_FMT)
     cur_date = start_date
     while cur_date <= end_date:
-        start_str = cur_date.strftime("%Y-%m-%d")
-        end_str = (cur_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        #print(cur_date)
+        start_str = cur_date.strftime(DATE_FMT)
+        end_str = (cur_date + timedelta(days=1)).strftime(DATE_FMT)
         d = get_data_counts(id, generators, start_str, end_str)
         df = pd.DataFrame(d, index=[0])
         df['date'] = cur_date
-        df['pid'] = id
+        df['pid'] = str(id)
         id_df = id_df.append(df)
         cur_date += timedelta(days=1) 
 
-    pickle.dump(id_df, open("data_pull/generator_counts2/{}.df".format(id), 'wb'), -1)
+    id_df.to_csv("{}/{}.csv".format(out_dir, id), index=False)
 
 if __name__ == '__main__':
-    wave1_ids = []
-    with open("data_pull/wave1_ids.txt", "rb") as wave_f:
-        for line in wave_f.readlines():
-            wave1_ids.append(line.strip())
+    script_description = "Process PDK sensor counts and dumps them to .csv for processing.\nExample Usage: python pdk_count_pull.py wave1_ids.txt pdk_counts/ <pdk_token_string> 2019-08-31 2019-09-05 8"
+    parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('id_file', type=str, help="a file containing participant ids, separated by newlines")
+    parser.add_argument('out_dir', type=str, help="the output directory location")
+    parser.add_argument('pdk_token', type=str, help="PDK token for accessing data")
+    parser.add_argument('start_date', type=str, help="the start date for parsing data (yyyy-mm-dd format)")
+    parser.add_argument('end_date', type=str, help="the end date for parsing data (yyyy-mm-dd format)")
+    parser.add_argument('num_procs', type=int, default=2, help="the number of processes to allocate (default 2)")
+    
+    args = parser.parse_args()
 
-    pool = Pool(processes=6)
-    pool.map(process_counts, wave1_ids)
+    ids = []
+    with open(args.id_file, "rb") as wave_f:
+        for line in wave_f.readlines():
+            ids.append(line.strip())
+
+    # client setup, TODO parameterize
+    SITE_URL = "https://lifesense.fsm.northwestern.edu/data"
+    TOKEN = args.pdk_token
+    PAGE_SIZE = 100
+    client = PDKClient(site_url=SITE_URL, token=TOKEN)
+
+    # have to use partials since python 2.7 multiprocessing doesn't have starmap()
+    process_counts_partial = partial(process_counts,
+                                     start_date = args.start_date,                                     
+                                     end_date = args.end_date,
+                                     out_dir  = args.out_dir)                                     
+
+    pool = Pool(processes=args.num_procs)
+    pool.map(process_counts_partial, ids)
     pool.close() 
+
+    count_df = pd.DataFrame()
+    for pid in ids:
+        df = pd.read_csv("{}/{}.csv".format(args.out_dir, pid))
+        count_df = count_df.append(df)
+    count_df.to_csv("{}/generator_counts_{}-{}.csv".format(args.out_dir, args.start_date, args.end_date), index=False)
