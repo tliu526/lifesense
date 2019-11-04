@@ -5,13 +5,11 @@ Requires python 2.7, for the pdk_client module
 
 """
 import argparse
-import json
 
 from datetime import date, timedelta, datetime
 from functools import partial
 from multiprocessing import Pool
 
-import numpy as np
 import pandas as pd
 
 from pdk_client import PDKClient
@@ -38,12 +36,11 @@ generators = [
     'pdk-sensor-step-count'
 ]
 
-def get_data_counts(id, generators, client, start_date, end_date):
+def get_data_counts(id, generators, start_date, end_date):
     """Gets the number of data points collected over the specified id, generator, date range.
 
     Args:
         id (str): the participant id
-        client (PDKClient): a pdk client object
         generators (list): the generator names
         start_date (str): the start date of the filter, in yyyy-mm-dd form
         start_date (str): the end date of the filter, in yyyy-mm-dd form
@@ -61,14 +58,13 @@ def get_data_counts(id, generators, client, start_date, end_date):
 
     return count_dict
 
-def process_counts(id, client, start_date, end_date, out_dir):
+def process_counts(id, start_date, end_date, out_dir):
     """Processes counts for the given id over the date range
 
     Dumps the resulting DataFrame into the specified directory.
 
     Args:
         id (str): the participant id to pull
-        client (PDKClient): a pdk client object
         start_date (str): the start date in yyyy-mm-dd form
         end_date (str): the start date in yyyy-mm-dd form
         out_dir (str): the name of the output directory
@@ -85,7 +81,7 @@ def process_counts(id, client, start_date, end_date, out_dir):
         #print(cur_date)
         start_str = cur_date.strftime(DATE_FMT)
         end_str = (cur_date + timedelta(days=1)).strftime(DATE_FMT)
-        d = get_data_counts(id, generators, client, start_str, end_str)
+        d = get_data_counts(id, generators, start_str, end_str)
         df = pd.DataFrame(d, index=[0])
         df['date'] = cur_date
         df['pid'] = str(id)
@@ -119,7 +115,6 @@ if __name__ == '__main__':
 
     # have to use partials since python 2.7 multiprocessing doesn't have starmap()
     process_counts_partial = partial(process_counts,
-                                     client = client,
                                      start_date = args.start_date,                                     
                                      end_date = args.end_date,
                                      out_dir  = args.out_dir)                                     
