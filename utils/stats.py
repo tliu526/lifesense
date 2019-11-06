@@ -18,12 +18,12 @@ Hmisc = importr("Hmisc")
 pandas2ri.activate()
 
 
-def build_corr_mat(corrs, p_vals, labels, title, alpha, figsize=[20,12]):
+def build_corr_mat(corrs, p_vals, labels, title, alpha, figsize=[20,12], vmin=-1, vmax=1):
     """
     returns the matplotlib plt object for the specified correlations.
     """
     plt.rcParams["figure.figsize"] = figsize
-    plt.imshow(corrs)
+    plt.imshow(corrs, vmin=vmin, vmax=vmax)
     for i in range(len(labels)):
         for j in range(len(labels)):
             text = "{0:.2f}".format(corrs[i, j])
@@ -33,6 +33,8 @@ def build_corr_mat(corrs, p_vals, labels, title, alpha, figsize=[20,12]):
             plt.text(j,i, text, ha="center", va="center", color="w")
     plt.xticks([x for x in range(len(labels))], labels, rotation=45, ha="right", rotation_mode='anchor')
     plt.yticks([x for x in range(len(labels))], labels)
+    plt.xlim(-0.5, corrs.shape[1] - .5)
+    plt.ylim(-0.5, corrs.shape[1] - .5)
     plt.colorbar()
     plt.title(title)
     return plt

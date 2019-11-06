@@ -5,6 +5,7 @@ Utilities for processing lifesense data files.
 import pandas as pd
 import numpy as np
 from haversine import haversine
+from scipy.signal import lombscargle
 from sklearn.cluster import KMeans
 
 def format_time(df):
@@ -118,3 +119,109 @@ def build_sms_hr(pid):
     sms_hr = sms_hr.reset_index()
     sms_hr['pid'] = pid
     return sms_hr
+
+def process_fus_daily(fus, cluster_radius=0.2):
+    """
+    Assumes date, pid columns are populated
+    """
+    
+    # get stationary locations
+    fus['prev_lat'] = fus['latitude'].shift()
+    fus['prev_long'] = fus['longitude'].shift()
+    fus['dist'] = fus.apply(lambda x: haversine((x.latitude, x.longitude), (x.prev_lat, x.prev_long)), axis=1) # in km
+    fus['prev_timestamp'] = fus['timestamp'].shift()
+    fus['delta_timestamp'] = ((fus['timestamp'] - fus['prev_timestamp']) / (60 * 60)).astype(float) # change to hours
+    fus['velocity'] = fus['dist'] / fus['delta_timestamp']
+    fus['stationary'] = fus['velocity'] < 1
+    fus_stationary = fus[fus['stationary']]
+    
+    loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
+
+    # assign clusters
+    cur_mean = 1
+    cur_clusters = 0
+    while cur_mean > cluster_radius:
+        cur_clusters += 1
+        X = fus_stationary[['latitude', 'longitude']]
+        kmeans = KMeans(n_clusters=cur_clusters, random_state=0).fit(X)
+        transform_X = kmeans.transform(X)
+        labels = kmeans.labels_
+        clusters = kmeans.cluster_centers_
+        X = X.reset_index(drop=True)
+        X['labels'] = labels
+        X['center'] = X.apply(lambda x: clusters[int(x.labels)], axis=1)
+        X['dist'] = X.apply(lambda x: haversine((x.latitude, x.longitude), x.center), axis=1)
+        cur_mean = X['dist'].mean()
+    
+    # get daily entropy
+    fus_stationary = fus_stationary.reset_index(drop=True)
+    fus_stationary['cluster'] = X['labels']
+    label_group = fus_stationary.groupby(['date', 'cluster'])['delta_timestamp'].sum().unstack()
+    label_group = label_group.fillna(0)
+    label_group['total'] = label_group.sum(axis=1)
+    label_group = label_group.div(label_group['total'], axis=0)
+    label_group['entropy'] = -(np.log(label_group) * label_group).sum(axis=1)
+    label_group = label_group.reset_index()
+    
+    fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
+    fus_combined = pd.merge(fus_combined, label_group[['date', 'entropy']], on='date', how='outer')
+    fus_combined['cluster'] = cur_clusters
+    fus_combined['loc_var'] = loc_var
+    
+    fus_combined['velocity'] = fus.groupby(['pid', 'date'], as_index=False)['velocity'].mean()['velocity']
+    #display(fus.groupby(['pid', 'date'], as_index=False)['velocity'].mean())
+    #fus_moving = fus[fus['stationary'] > 0]
+    
+    #fus_combined['transition_time'] = fus_moving.groupby(['pid', 'date'], as_index=False)['delta_timestamp'].sum()
+    #display(fus_moving.groupby(['pid', 'date'], as_index=False)['delta_timestamp'].sum())
+    
+    return fus_combined
+
+
+def format_raw_fus(fus):
+    """Formats raw fus df and returns one ready for processing.
+
+    Args:
+        fus (pd.DataFrame): raw fus df pulled from lifesense server
+
+    Returns:
+        pd.DataFrame: formatted fus DataFrame
+    """
+    
+    fus = format_time(fus)
+    
+    final_fus = fus
+    final_fus['timestamp'] = final_fus['adj_ts']
+    
+    return final_fus[['pid', 'longitude', 'latitude', 'timestamp', 'date']]
+    
+
+def build_fus(pid):
+    fus_df = pd.read_pickle("data_pull/pdk-location/{}.df".format(pid))
+    print(pid)
+    if fus_df.shape[0] < 1:
+        return 
+    print(fus_df.shape)
+    fus_df = format_raw_fus(fus_df)
+    return process_fus_daily(fus_df)
+
+
+def get_circadian_movement(fus_df):
+    """Calculates the circadian movement based on GPS location for participants
+    https://github.com/sosata/CS120DataAnalysis/blob/master/features/estimate_circadian_movement.m
+    TODO need to verify the frequency is calculated correctly.
+    
+    """
+    # frequency range of 24 +- 0.5 hrs
+    freq = np.linspace(86400-30*60, 86400+30*60, 2*30*60)
+    try:
+        energy_lat = sum(lombscargle(fus_df['timestamp'], fus_df['latitude'], freq, normalize=True))
+        energy_long = sum(lombscargle(fus_df['timestamp'], fus_df['longitude'], freq, normalize=True))
+    except ZeroDivisionError:
+        return np.nan
+    
+    tot_energy = energy_lat + energy_long
+    if tot_energy > 0:
+        return np.log(energy_lat + energy_long)
+    else:
+        return np.nan
