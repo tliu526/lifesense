@@ -42,7 +42,7 @@ def process_cal(id, cal_df):
     cal_df['call_time'] = pd.to_datetime(cal_df['adj_call_ts'], unit='ms')
 
 
-def build_cal_hr(pid):
+def build_cal_hr(pid, loc):
     """
     Builds a df with the following call statistics partitioned by hour:
         - tot_call_count
@@ -55,7 +55,7 @@ def build_cal_hr(pid):
         pd.DataFrame
     """
     print(pid)
-    cal_df = pd.read_pickle("data_pull/pdk-phone-calls/{}.df".format(pid))
+    cal_df = pd.read_pickle("{}/{}.df".format(loc, pid))
     if cal_df.shape[0] < 1:
         return 
     cal_df = format_time(cal_df)
@@ -77,7 +77,7 @@ def build_cal_hr(pid):
     return cal_hr
 
 
-def build_sms_hr(pid):
+def build_sms_hr(pid, loc):
     """
     Builds a df with the following sms statistics partitioned by hour:
         - tot_sms_count
@@ -93,7 +93,7 @@ def build_sms_hr(pid):
         pd.DataFrame
     """
     print(pid)
-    sms_df = pd.read_pickle("data_pull/pdk-text-messages/{}.df".format(pid))
+    sms_df = pd.read_pickle("{}/{}.df".format(loc, pid))
     if sms_df.shape[0] < 1:
         return 
     sms_df = format_time(sms_df)
@@ -196,8 +196,8 @@ def format_raw_fus(fus):
     return final_fus[['pid', 'longitude', 'latitude', 'timestamp', 'date']]
     
 
-def build_fus(pid):
-    fus_df = pd.read_pickle("data_pull/pdk-location/{}.df".format(pid))
+def build_fus(pid, loc):
+    fus_df = pd.read_pickle("{}/{}.df".format(loc, pid))
     print(pid)
     if fus_df.shape[0] < 1:
         return 
@@ -225,3 +225,95 @@ def get_circadian_movement(fus_df):
         return np.log(energy_lat + energy_long)
     else:
         return np.nan
+
+
+def build_circadian_stats(pid, loc):
+    """Gets aggregate daily sms statistics for a given pid
+    
+    """
+    print(pid)
+    fus_df = pd.read_pickle("{}/{}.df".format(loc, pid))
+    if fus_df.shape[0] < 1:
+        return 
+    
+    fus_df = format_raw_fus(fus_df)
+    fus_df["is_wkday"] = (pd.to_datetime(fus_df['date']).dt.dayofweek < 5).astype(float)
+
+    agg_df = pd.DataFrame()
+    agg_df['pid'] = [pid]
+    agg_df['circ_movt_tot'] = get_circadian_movement(fus_df) 
+    agg_df['circ_movt_wkday'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 1]) 
+    agg_df['circ_movt_wkend'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 0]) 
+    return agg_df
+
+
+apps = [
+    'katana',
+    'orca', 
+    'messaging',
+    'launcher',
+    'chrome',
+    'email',
+    'instagram',
+    'youtube',
+    'maps',
+    'snapchat',
+    'browser'
+]
+
+
+def process_fga_time(time, fga_group):
+    """
+    Processes application foreground time within the given screen group.
+    
+    Assumes fga_group is grouped by some unit of time.
+    
+    Args:
+        time (datetime)
+        fga_group (pd.DataFrame)
+    
+    Returns:
+        dict: (k,v) app keyword, time spent 
+    """
+    app_time = {}
+    for app in apps:
+        app_time[app] = 0
+    app_time['hr'] = time
+
+    idx = 0
+    while idx < fga_group.shape[0]:
+        cur_app = None
+        for app in apps:
+            if app in fga_group.iloc[idx]['application']:
+                cur_app = app
+                break
+                
+        if cur_app is not None and fga_group.iloc[idx]['screen_active']:
+            if idx < (fga_group.shape[0]-1):
+                app_time[cur_app] += (fga_group.iloc[idx+1]['time'] -  fga_group.iloc[idx]['time']).total_seconds()
+    
+            elif idx == fga_group.shape[0]-1:
+                # we're in the case where we're at the bottom of the hour
+                app_time[cur_app] += ((time + pd.Timedelta(1, unit='h')) -  fga_group.iloc[idx]['time']).total_seconds()
+        idx +=1
+
+    return app_time
+
+
+def build_fga_hr(pid, loc):
+    fga_df = pd.read_pickle("{}/{}.df".format(loc, pid))
+    if fga_df.shape[0] < 1:
+        return 
+    fga_df = format_time(fga_df)
+    fga_hr = pd.DataFrame()
+    fga_slim = fga_df[['hour', 'time', 'screen_active', 'application', 'adj_ts']]
+    for time, group in fga_slim.groupby("hour"):
+        hr = pd.DataFrame(process_fga_time(time, group), index=[0])
+        fga_hr = fga_hr.append(hr)
+
+    fga_hr = fga_hr.set_index('hr')
+    fga_hr = fga_hr.resample('1H').sum()
+    fga_hr = fga_hr.reset_index()
+    fga_hr['pid'] = pid
+
+    return fga_hr
