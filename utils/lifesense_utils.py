@@ -307,6 +307,10 @@ def build_fga_hr(pid, loc):
     fga_df = format_time(fga_df)
     fga_hr = pd.DataFrame()
     fga_slim = fga_df[['hour', 'time', 'screen_active', 'application', 'adj_ts']]
+
+    # need to drop NaN applications else groupby frames won't work
+    fga_slim = fga_slim.dropna(subset=["application"])
+
     for time, group in fga_slim.groupby("hour"):
         hr = pd.DataFrame(process_fga_time(time, group), index=[0])
         fga_hr = fga_hr.append(hr)
