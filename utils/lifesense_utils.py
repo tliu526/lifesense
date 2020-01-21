@@ -7,6 +7,7 @@ import numpy as np
 from haversine import haversine
 from scipy.signal import lombscargle
 from sklearn.cluster import KMeans
+from geopy.distance import distance
 
 def format_time(df):
     """
@@ -135,6 +136,10 @@ def process_fus_daily(fus, cluster_radius=0.2):
     fus['stationary'] = fus['velocity'] < 1
     fus_stationary = fus[fus['stationary']]
     
+
+    if fus_stationary.shape[0] < 1:
+        return None
+        
     loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
 
     # assign clusters
@@ -208,15 +213,19 @@ def build_fus(pid, loc):
 
 def get_circadian_movement(fus_df):
     """Calculates the circadian movement based on GPS location for participants
+    blog post reference fo
     https://github.com/sosata/CS120DataAnalysis/blob/master/features/estimate_circadian_movement.m
     TODO need to verify the frequency is calculated correctly.
     
     """
-    # frequency range of 24 +- 0.5 hrs
-    freq = np.linspace(86400-30*60, 86400+30*60, 2*30*60)
+    # frequency range of 24 +- 0.5 hrs at a minute granularity
+    freq = np.linspace(86400-30*60, 86400+30*60, 60)
+    # scipy implementation requires angular frequency
+    freq = 2 * np.pi / freq 
     try:
-        energy_lat = sum(lombscargle(fus_df['timestamp'], fus_df['latitude'], freq, normalize=True))
-        energy_long = sum(lombscargle(fus_df['timestamp'], fus_df['longitude'], freq, normalize=True))
+        # make sure to precenter each time series
+        energy_lat = sum(lombscargle(fus_df['timestamp'], fus_df['latitude'], freq, precenter=True, normalize=True))
+        energy_long = sum(lombscargle(fus_df['timestamp'], fus_df['longitude'], freq, precenter=True, normalize=True))
     except ZeroDivisionError:
         return np.nan
     
@@ -301,6 +310,8 @@ def process_fga_time(time, fga_group):
 
 
 def build_fga_hr(pid, loc):
+    """Builds foreground application aggregation DataFrame"""
+
     fga_df = pd.read_pickle("{}/{}.df".format(loc, pid))
     if fga_df.shape[0] < 1:
         return 
@@ -321,3 +332,114 @@ def build_fga_hr(pid, loc):
     fga_hr['pid'] = pid
 
     return fga_hr
+
+
+
+def tag_semantic_locs(pid, sloc_df, file_loc, cluster_rad=500):
+    """
+    Tags each location sensor reading with a semantic label, if applicable.
+    
+    We only use labelled locations from the same week of data collection, or earlier.
+    
+    Args:
+        pid (str): participant id
+        sloc_df (df): the semantic location DataFrame loaded from file
+        file_loc (str): the file location for the location df
+        cluster_rad (int): the maximum cluster radius
+        
+    Returns:
+        "raw" DataFrame with long/lat labelled
+    """
+    print(pid)
+    loc_df = pd.read_pickle("{}/{}.df".format(file_loc, pid))
+    if loc_df.shape[0] < 1:
+        return 
+    loc_df = format_time(loc_df)
+    sloc_pid = sloc_df.loc[sloc_df['pid'] == pid]
+    sloc_pid = sloc_pid[sloc_pid['date'] <= max(loc_df['date'])]
+    places = []
+
+    for i, loc_row in loc_df.iterrows():
+
+        dist = cluster_rad + 5
+        for j, sloc_row in sloc_pid.iterrows():
+            dist = distance((loc_row['latitude'], loc_row['longitude']), (sloc_row['place-latitude'], sloc_row['place-longitude'])).m
+            if dist < cluster_rad:
+                break
+                
+        if dist < cluster_rad:
+            places.append(sloc_row['place-kind'])
+        else:
+            places.append(np.nan)
+
+    loc_df['place-kind'] = places
+    
+    return loc_df[['pid', 'date', 'time', 'latitude', 'longitude', 'place-kind']]
+
+
+""" def build_sloc(pid, in_loc, out_loc):
+        Builds and dumps raw semantic location df
+    
+        df = tag_semantic_locs(pid, semantic_locs, in_loc)
+        pd.to_pickle(df, "{}/{}.df".format(out_loc, pid))
+"""
+
+
+def process_transition_hr(time, sloc_group):
+    """Helper for building sloc feature DataFrame."""
+    num_transitions = 0
+    transition_dict = {}
+    transition_dict['hr'] = time
+    
+    for sloc in sloc_map.values():
+        transition_dict[sloc + '_dur'] = 0
+
+    for sloc_i in sloc_map.values():
+        for sloc_j in sloc_map.values():
+            if sloc_i is not sloc_j:
+                transition_dict[sloc_i + '_' + sloc_j] = 0
+    
+    cur_loc = sloc_group.iloc[0]['place-kind-fmt']
+    cur_time = sloc_group.iloc[0]['time']
+    for i, row in sloc_group.iterrows():
+        next_loc = row['place-kind-fmt']
+        next_time = row['time']
+        if next_loc is not cur_loc:
+            num_transitions += 1
+            transition_dict[cur_loc + '_dur'] += (next_time - cur_time).total_seconds()
+            transition_dict[cur_loc + '_' + next_loc] += 1
+            cur_loc = next_loc
+            cur_time = next_time
+    
+    # at the bottom of the hour
+    transition_dict[cur_loc + '_dur'] += ((time + pd.Timedelta(1, unit='h')) - cur_time).total_seconds()
+    
+    transition_dict['tot_tansitions'] = num_transitions
+    #print(transition_dict)
+    return transition_dict
+
+
+def build_sloc_hr(pid, loc):
+    """Builds semantic location aggregation DataFrame"""
+    print(pid)
+    sloc_hr = pd.DataFrame()
+    sloc_pid = pd.read_pickle("{}/{}.df".format(loc, pid))
+    if sloc_pid is None:
+        return
+    if sloc_pid.shape[0] < 1:
+        return
+    
+    sloc_pid['hour'] = sloc_pid['time'].dt.floor('H')
+    sloc_pid['place-kind-fmt'] = sloc_pid['place-kind'].map(sloc_map)
+    sloc_pid['place-kind-fmt'] = sloc_pid['place-kind-fmt'].fillna('other')
+
+    for time, group in sloc_pid.groupby("hour"):
+        sl = pd.DataFrame(process_transition_hr(time, group), index=[0])
+        sloc_hr = sloc_hr.append(sl)
+
+    sloc_hr = sloc_hr.set_index('hr')
+    sloc_hr = sloc_hr.resample('1H').sum()
+    sloc_hr = sloc_hr.reset_index()
+    sloc_hr['pid'] = pid
+
+    return sloc_hr
