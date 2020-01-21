@@ -385,6 +385,24 @@ def tag_semantic_locs(pid, sloc_df, file_loc, cluster_rad=500):
 """
 
 
+sloc_map = {
+    "Food and Drink" : "food",
+    "Home" : "home",
+    "Work" : "work",
+    "Gym/Exercise" : "exercise",
+    "Another Person's Home" : "anothers_home",
+    "Place of Worship" : "religion",
+    "Commute/Travel" : "travel",
+    "Shopping" : "shopping",
+    "Errand" : "errand",
+    "Medical/Dentist/Mental Health" : "health",
+    "Education" : "education",
+    "Entertainment" : "entertainment",
+    "Other..." : "other",
+    np.nan : "n/a"
+}
+
+
 def process_transition_hr(time, sloc_group):
     """Helper for building sloc feature DataFrame."""
     num_transitions = 0
