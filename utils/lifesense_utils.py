@@ -122,8 +122,18 @@ def build_sms_hr(pid, loc):
     return sms_hr
 
 def process_fus_daily(fus, cluster_radius=0.2):
-    """
-    Assumes date, pid columns are populated
+    """Processes daily fused location features.
+    
+    Assumes date, pid columns are populated.
+
+    This includes average velocity, number of stationary clusters, location entropy, and location variance.
+
+    For reference, see https://github.com/sosata/MobileDepression/tree/master/features and 
+    Saeb et al: The relationship between mobile phone location sensor data and depressive symptom severity
+
+    Args:
+        fus (pd.DataFrame): the fused location df with latitude, longitude, date, and pid columns
+
     """
     
     # get stationary locations
@@ -133,13 +143,16 @@ def process_fus_daily(fus, cluster_radius=0.2):
     fus['prev_timestamp'] = fus['timestamp'].shift()
     fus['delta_timestamp'] = ((fus['timestamp'] - fus['prev_timestamp']) / (60 * 60)).astype(float) # change to hours
     fus['velocity'] = fus['dist'] / fus['delta_timestamp']
-    fus['stationary'] = fus['velocity'] < 1
+
+    fus = fus[fus['velocity'] >= 0] # drop rows with negative velocities
+    fus['stationary'] = fus['velocity'] < 1 # filter locations that have a speed of greater than 1 km/hr
     fus_stationary = fus[fus['stationary']]
     
 
     if fus_stationary.shape[0] < 1:
         return None
         
+    # TODO should this be stationary or all locations?
     loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
 
     # assign clusters
@@ -149,7 +162,6 @@ def process_fus_daily(fus, cluster_radius=0.2):
         cur_clusters += 1
         X = fus_stationary[['latitude', 'longitude']]
         kmeans = KMeans(n_clusters=cur_clusters, random_state=0).fit(X)
-        transform_X = kmeans.transform(X)
         labels = kmeans.labels_
         clusters = kmeans.cluster_centers_
         X = X.reset_index(drop=True)
@@ -166,6 +178,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
     label_group['total'] = label_group.sum(axis=1)
     label_group = label_group.div(label_group['total'], axis=0)
     label_group['entropy'] = -(np.log(label_group) * label_group).sum(axis=1)
+    label_group['norm_entropy'] = label_group['entropy'] / np.log(cur_clusters) # entropy normalized by number of location clusters
     label_group = label_group.reset_index()
     
     fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
@@ -213,9 +226,9 @@ def build_fus(pid, loc):
 
 def get_circadian_movement(fus_df):
     """Calculates the circadian movement based on GPS location for participants
-    blog post reference fo
+    
+    Basing implementation off of 
     https://github.com/sosata/CS120DataAnalysis/blob/master/features/estimate_circadian_movement.m
-    TODO need to verify the frequency is calculated correctly.
     
     """
     # frequency range of 24 +- 0.5 hrs at a minute granularity
@@ -254,6 +267,44 @@ def build_circadian_stats(pid, loc):
     agg_df['circ_movt_wkday'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 1]) 
     agg_df['circ_movt_wkend'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 0]) 
     return agg_df
+
+
+def build_circ_window(pid, wk, start_date, end_date):
+    """Builds circadean movement features within the given window.
+    
+    TODO refactor with build_circadean_stats
+    
+    Assumes that the start_date and end_date fall within the given week.
+    
+    
+    Args:
+        - pid (str): the participant id
+        - wk (int): the study week to pull data from: 1, 4, 7, 10, 13, 16
+        - fus_df (pd.DataFrame): a fus_df frame with properly formatted date columns
+        - start_date (str): start date, yyyy-mm-dd
+        - end_date (str): end date, yyyy-mm-dd
+        
+    Returns:
+        - circ_df (pd.DataFrame): frame with circadean movement statistics calculated for the given time window
+    """
+    print(pid)
+    loc = "/data/tliu/wk{}_ls_data/pdk-location/{}.df".format(wk, pid)
+    fus_df = pd.read_pickle(loc)
+    if fus_df.shape[0] < 1:
+        return
+    
+    fus_df = format_raw_fus(fus_df)
+    fus_df = fus_df[(fus_df['date'] >= start_date) & (fus_df['date'] <= end_date)]
+    print(fus_df.shape)
+    fus_df["is_wkday"] = (pd.to_datetime(fus_df['date']).dt.dayofweek < 5).astype(float)
+
+    circ_df = pd.DataFrame()
+    circ_df['pid'] = [pid]
+    circ_df['circ_movt_tot'] = get_circadian_movement(fus_df) 
+    circ_df['circ_movt_wkday'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 1]) 
+    circ_df['circ_movt_wkend'] = get_circadian_movement(fus_df.loc[fus_df['is_wkday'] == 0]) 
+    
+    return circ_df
 
 
 apps = [
@@ -375,7 +426,7 @@ def tag_semantic_locs(pid, sloc_df, file_loc, cluster_rad=500):
     loc_df['place-kind'] = places
     
     return loc_df[['pid', 'date', 'time', 'latitude', 'longitude', 'place-kind']]
-
+    
 
 """ def build_sloc(pid, in_loc, out_loc):
         Builds and dumps raw semantic location df
@@ -461,3 +512,4 @@ def build_sloc_hr(pid, loc):
     sloc_hr['pid'] = pid
 
     return sloc_hr
+    
