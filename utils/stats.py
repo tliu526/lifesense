@@ -93,3 +93,30 @@ def build_ttest_dfs(pid_df, group_col, val_cols):
             t_df[col] = t_df[col].apply(lambda x: format(float(x), '.3f'))
             p_df[col] = p_df[col].apply(lambda x: format(float(x), '.3f'))
     return t_df, p_df
+
+
+def ortho_rotation(components, method='varimax', tol=1e-6, max_iter=100):
+    """Return rotated components.
+    
+    https://github.com/scikit-learn/scikit-learn/pull/11064/files
+    """
+    nrow, ncol = components.shape
+    rotation_matrix = np.eye(ncol)
+    var = 0
+
+    for _ in range(max_iter):
+        comp_rot = np.dot(components, rotation_matrix)
+        if method == "varimax":
+            tmp = np.diag((comp_rot ** 2).sum(axis=0)) / nrow
+            tmp = np.dot(comp_rot, tmp)
+        elif method == "quartimax":
+            tmp = 0
+        u, s, v = np.linalg.svd(
+            np.dot(components.T, comp_rot ** 3 - tmp))
+        rotation_matrix = np.dot(u, v)
+        var_new = np.sum(s)
+        if var != 0 and var_new < var * (1 + tol):
+            break
+        var = var_new
+
+    return np.dot(components, rotation_matrix).T
