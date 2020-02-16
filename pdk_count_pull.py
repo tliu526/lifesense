@@ -18,6 +18,7 @@ from pdk_client import PDKClient
 
 DATE_FMT = "%Y-%m-%d"
 
+"""
 generators = [
     'pdk-system-status',
     'pdk-sensor-accelerometer',
@@ -37,6 +38,7 @@ generators = [
     'morning_ema', 
     'pdk-sensor-step-count'
 ]
+"""
 
 def get_data_counts(id, generators, client, start_date, end_date):
     """Gets the number of data points collected over the specified id, generator, date range.
@@ -61,7 +63,7 @@ def get_data_counts(id, generators, client, start_date, end_date):
 
     return count_dict
 
-def process_counts(id, client, start_date, end_date, out_dir):
+def process_counts(id, client, start_date, end_date, out_dir, generators):
     """Processes counts for the given id over the date range
 
     Dumps the resulting DataFrame into the specified directory.
@@ -72,7 +74,7 @@ def process_counts(id, client, start_date, end_date, out_dir):
         start_date (str): the start date in yyyy-mm-dd form
         end_date (str): the start date in yyyy-mm-dd form
         out_dir (str): the name of the output directory
-
+        generators (list): a list of the sensor generators to pull across
     Returns:
         None
     """
@@ -95,9 +97,10 @@ def process_counts(id, client, start_date, end_date, out_dir):
     id_df.to_csv("{}/{}.csv".format(out_dir, id), index=False)
 
 if __name__ == '__main__':
-    script_description = "Process PDK sensor counts and dumps them to .csv for processing.\nExample Usage: python pdk_count_pull.py wave1_ids.txt pdk_counts/ <pdk_token_string> 2019-08-31 2019-09-05 8"
+    script_description = "Process PDK sensor counts and dumps them to .csv for processing.\nExample Usage: python pdk_count_pull.py lifsense_sensors.txt wave1_ids.txt pdk_counts/ <pdk_token_string> 2019-08-31 2019-09-05 8"
     parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('id_file', type=str, help="a file containing participant ids, separated by newlines")
+    parser.add_argument('sensor_file', type=str, help="a file containing sensors to pull, separated by newlines")
     parser.add_argument('out_dir', type=str, help="the output directory location")
     parser.add_argument('pdk_token', type=str, help="PDK token for accessing data")
     parser.add_argument('start_date', type=str, help="the start date for parsing data (yyyy-mm-dd format)")
@@ -111,6 +114,11 @@ if __name__ == '__main__':
         for line in wave_f.readlines():
             ids.append(line.strip())
 
+    sensors = []
+    with open(args.sensor_file, "rb") as sensor_f:
+        for line in sensor_f.readlines():
+            sensors.append(line.strip())
+
     # client setup, TODO parameterize
     SITE_URL = "https://lifesense.fsm.northwestern.edu/data"
     TOKEN = args.pdk_token
@@ -122,7 +130,8 @@ if __name__ == '__main__':
                                      client = client,
                                      start_date = args.start_date,                                     
                                      end_date = args.end_date,
-                                     out_dir  = args.out_dir)                                     
+                                     out_dir  = args.out_dir,
+                                     generators = sensors)
 
     pool = Pool(processes=args.num_procs)
     pool.map(process_counts_partial, ids)
