@@ -2,6 +2,8 @@
 LifeSense feature creation pipeline.
 
 Moves sensor processing present in wk_feature_processing into functions
+
+Moves semantic location processing in lifesense_cluster_processing into functions
 """
 
 #%% imports
@@ -43,6 +45,26 @@ def process_sensor_data(pids, loc, out_loc, func, n_procs=4):
     df.to_pickle(out_loc)
 
 
+def process_sloc(pids, sloc_df, in_loc, out_loc, n_procs=4):
+    """
+    Builds and dumps raw semantic location df
+    
+    Args:
+        pid (str): participant id
+        sloc_df (df): the semantic location DataFrame loaded from file
+        in_loc (str): the file location for the location df
+        out_loc (str): the file location for the target location df
+        n_procs (int): the number of processes to spin up
+    
+    Returns:
+        None, but writes to out_loc/semantic-location/{pid}.df
+    """
+    func_args = [(pid, sloc_df, in_loc, out_loc) for pid in pids]
+
+    with Pool(n_procs) as pool:
+        pool.starmap(lsu.build_sloc, func_args)
+
+
 if __name__ == '__main__':
     script_description = "Script for processing raw lifesense data into features"
     parser = argparse.ArgumentParser(description=script_description)
@@ -65,8 +87,12 @@ if __name__ == '__main__':
     # TODO
     parser.add_argument('--fus', action='store_true', 
                         help="TODO process fused location features")
+    parser.add_argument('--sloc_raw', action='store_true', 
+                        help="process raw semantic location features (requires --sloc_df)")
+    parser.add_argument('--sloc_df', help="sloc_df DataFrame location")
     parser.add_argument('--sloc', action='store_true', 
-                        help="TODO process semantic location features")
+                        help="process semantic location features (requires raw sloc to be processed)")
+    
 
     args = parser.parse_args()
 
@@ -74,12 +100,15 @@ if __name__ == '__main__':
     fga_in = "{}/pdk-foreground-application/"
     cal_in = "{}/pdk-phone-calls/"
     sms_in = "{}/pdk-text-messages/"
+    sloc_in = "{}/semantic-location/"
 
     fus_out = "{}/fus_daily.df"
     circ_out = "{}/circ_movt.df"
     fga_out = "{}/fga_hr.df"
     cal_out = "{}/cal_hr.df"
     sms_out = "{}/sms_hr.df"
+    sloc_raw = "{}/semantic-location/"
+    sloc_out = "{}/sloc_hr.df"
 
     pids = []
     with open(args.id_file, "r") as wave_f:
@@ -105,6 +134,25 @@ if __name__ == '__main__':
                              fga_out.format(args.out_loc),
                              lsu.build_fga_hr,
                              args.n_procs))
+    if args.sloc_raw:
+        print(args.sloc_df)
+        # process and dump semantic location "raw" files
+        
+        # TODO assumes sloc DataFrame is already generated
+        # source: lifesense_cluster_processing.ipynb
+        semantic_locs = pd.read_pickle(args.sloc_df)
+
+        process_sloc(pids, 
+                     semantic_locs, 
+                     fus_in.format(args.in_loc),
+                     sloc_raw.format(args.out_loc),
+                     args.n_procs)
+    if args.sloc:
+        process_args.append((pids, 
+                        sloc_in.format(args.in_loc), 
+                        sloc_out.format(args.out_loc),
+                        lsu.build_sloc_hr,
+                        args.n_procs))
 
     for tup in process_args:
         process_sensor_data(*tup)
