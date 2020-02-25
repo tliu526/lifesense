@@ -97,7 +97,7 @@ def process_counts(id, client, start_date, end_date, out_dir, generators):
     id_df.to_csv("{}/{}.csv".format(out_dir, id), index=False)
 
 if __name__ == '__main__':
-    script_description = "Process PDK sensor counts and dumps them to .csv for processing.\nExample Usage: python pdk_count_pull.py lifsense_sensors.txt wave1_ids.txt pdk_counts/ <pdk_token_string> 2019-08-31 2019-09-05 8"
+    script_description = "Process PDK sensor counts and dumps them to .csv for processing.\nExample Usage: python pdk_count_pull.py  wave1_ids.txt lifesense_sensors.txt pdk_counts/ <pdk_token_string> 2019-08-31 2019-09-05 8"
     parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('id_file', type=str, help="a file containing participant ids, separated by newlines")
     parser.add_argument('sensor_file', type=str, help="a file containing sensors to pull, separated by newlines")

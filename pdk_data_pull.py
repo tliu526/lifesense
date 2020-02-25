@@ -173,9 +173,10 @@ if __name__ == '__main__':
     script_description = "Process PDK sensors and dumps them to a Pandas dataframe."
     parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('id_file', type=str, help="a file containing participant ids, separated by newlines")
+    parser.add_argument('sensor_file', type=str, help="a file containing sensors to pull, separated by newlines")
     parser.add_argument('data_source', type=str, help="the data source name (e.g. wave1, wave2)")
-    parser.add_argument('start_date', type=str, help="the start date for parsing data (yyyy-mm-dd format)")
-    parser.add_argument('end_date', type=str, help="the end date for parsing data (yyyy-mm-dd format)")
+    parser.add_argument('start_date', type=str, help="the start date (inclusive) for parsing data (yyyy-mm-dd format)")
+    parser.add_argument('end_date', type=str, help="the end date (exclusive) for parsing data (yyyy-mm-dd format)")
 
     parser.add_argument('out_loc', type=str, help="the output directory location")
     parser.add_argument('num_procs', type=int, default=2, help="the number of processes to allocate (default 2)")
@@ -192,26 +193,11 @@ if __name__ == '__main__':
         for line in wave_f.readlines():
             ids.append(line.strip())
 
-    # TODO parameterize
-    generators = [
-        'pdk-phone-calls', 
-        'pdk-text-messages', 
-        'morning_ema', 
-        'evening_ema', 
-        'morning_phq8',
-        'evening_phq8', 
-        #'pdk-sensor-accelerometer',
-        'pdk-screen-state',
-        'pdk-location',
-        'pdk-foreground-application'
-        ]
+    generators = []
+    with open(args.sensor_file, "rb") as sensor_f:
+        for line in sensor_f.readlines():
+            generators.append(line.strip())
 
-    """ generators = [
-        'morning_ema', 
-        'evening_ema', 
-        'morning_phq8',
-        'evening_phq8']
-    """
     process_gen_partial = partial(process_generators, 
                                   generators=generators, 
                                   data_source=args.data_source,

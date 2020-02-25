@@ -1,3 +1,4 @@
+
 #%% [markdown]
 # # PDK Client Data Pull
 # Notebook for PDK client manipulation
@@ -176,3 +177,121 @@ full_df.shape
 #%% process communication and screen state
 generators = ['pdk-phone-calls', 'pdk-text-messages', 'pdk-screen-state']
 process_generators(testwave_ids, generators, 'wave1')
+
+#%% try filtering based on date
+from psycopg2.extras import DateRange, DateTimeTZRange, NumericRange, Range
+ema_query = query.filter(generator_identifier='pdk-location',
+                         created__gte='2019-08-19',
+                         created__lte='2019-08-25').order_by('created')
+
+point = ema_query.first()
+count = 0
+for p in ema_query:
+    count += 1
+
+print(count)
+print(ema_query.count())
+print(point)
+ema_df = pd.DataFrame()
+
+ema_df = ema_df.append(pd.DataFrame.from_dict(point).iloc[0])
+
+metadata_dict = point['passive-data-metadata'] 
+
+metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+ema_df.reset_index(inplace=True, drop=True)
+full_df = pd.concat([metadata_df, ema_df], axis=1)
+full_df.drop('passive-data-metadata', axis='columns', inplace=True)
+display(full_df)
+
+#%% get counts for a particular time range
+
+generators = [
+    'pdk-system-status',
+    'pdk-sensor-accelerometer',
+    'pdk-device-battery',
+    'pdk-location',
+    'pdk-time-of-day',
+    'pdk-app-event',
+    'pdk-foreground-application',
+    'pdk-sensor-light',
+    'pdk-screen-state',
+    'pdk-text-messages',
+    'pdk-phone-calls',
+    'pdk-google-awareness',
+    'evening_phq8',
+    'morning_phq8',
+    'evening_ema', 
+    'morning_ema', 
+    'pdk-sensor-step-count'
+]
+
+def get_data_counts(id, generators, start_date, end_date):
+    """Gets the number of data points collected over the specified id, generator, date range.
+
+    Args:
+        id (str): the participant id
+        generators (list): the generator names
+        start_date (str): the start date of the filter, in yyyy-mm-dd form
+        start_date (str): the end date of the filter, in yyyy-mm-dd form
+
+    Returns:
+        dict: (generator, count) pairs over the time period
+    """
+    query = client.query_data_points(page_size=PAGE_SIZE, source=id)
+    count_dict = {}
+    for generator in generators:
+        print(generator)
+        gen_query = query.filter(generator_identifier=generator,
+                            created__gte=start_date,
+                            created__lt=end_date)
+        count_dict[generator] = gen_query.count()
+
+    return count_dict
+#%% test get_data_counts()
+%%time
+
+from datetime import date, timedelta
+
+id = '29878406'
+id_d = {}
+id_df = pd.DataFrame()
+
+start_date = date(2019, 8, 25)
+end_date = date(2019, 8, 27)
+cur_date = start_date
+while cur_date <= end_date:
+    start_str = cur_date.strftime("%Y-%m-%d")
+    end_str = (cur_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    d = get_data_counts(id, generators, start_str, end_str)
+    df = pd.DataFrame(d, index=[0])
+    df['date'] = cur_date
+    df['pid'] = id
+    id_df = id_df.append(df)
+    id_d[cur_date.strftime("%Y-%m-%d")] = d
+    cur_date += timedelta(days=1) 
+
+#%%
+
+def process_counts(id):
+    """Processes counts over the currently hardcoded dates
+
+    """
+    id_df = pd.DataFrame()
+
+    start_date = date(2019, 8, 25)
+    end_date = date(2019, 8, 27)
+    cur_date = start_date
+    while cur_date <= end_date:
+        start_str = cur_date.strftime("%Y-%m-%d")
+        end_str = (cur_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        d = get_data_counts(id, generators, start_str, end_str)
+        df = pd.DataFrame(d, index=[0])
+        df['date'] = cur_date
+        df['pid'] = id
+        id_df = id_df.append(df)
+        cur_date += timedelta(days=1) 
+
+    pickle.dump(id_df, open("data_pull/generator_counts/{}.df".format(id), 'wb'), -1)
+
+process_counts(id)
