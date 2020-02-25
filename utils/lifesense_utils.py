@@ -428,12 +428,12 @@ def tag_semantic_locs(pid, sloc_df, file_loc, cluster_rad=500):
     return loc_df[['pid', 'date', 'time', 'latitude', 'longitude', 'place-kind']]
     
 
-""" def build_sloc(pid, in_loc, out_loc):
-        Builds and dumps raw semantic location df
-    
-        df = tag_semantic_locs(pid, semantic_locs, in_loc)
-        pd.to_pickle(df, "{}/{}.df".format(out_loc, pid))
-"""
+def build_sloc(pid, sloc_df, in_loc, out_loc):
+    """Builds and dumps raw semantic location df
+    """    
+    df = tag_semantic_locs(pid, sloc_df, in_loc)
+    pd.to_pickle(df, "{}/{}.df".format(out_loc, pid))
+
 
 
 sloc_map = {
@@ -442,7 +442,7 @@ sloc_map = {
     "Work" : "work",
     "Gym/Exercise" : "exercise",
     "Another Person's Home" : "anothers_home",
-    "Place of Worship" : "religion",
+    "Place of Worship (Church, Temple, Etc.)" : "religion",
     "Commute/Travel" : "travel",
     "Shopping" : "shopping",
     "Errand" : "errand",
