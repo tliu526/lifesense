@@ -7,6 +7,7 @@ Moves semantic location processing in lifesense_cluster_processing into function
 """
 
 import argparse
+import numpy as np
 import pandas as pd
 import pickle
 from multiprocessing import Pool
@@ -104,17 +105,19 @@ def build_circ_window(pid, in_loc, start_date, end_date):
     return circ_df
 
 
-def build_circ_dict(seq_df, target, pre_days=3, post_days=3):
+def build_circ_dict(seq_df, in_loc, target, pre_days=3, post_days=3):
     """Builds a (col, [vals]) dictionary for circ features.
     
     Has to be processed separately because circadean movement cannot be aggregated to daily values.
     """
     col_dict = {}
-
+    
     cols = ['circ_movt_tot', 'circ_movt_wkday', 'circ_movt_wkend']
     for col in cols:
         col_dict[col] = []
 
+
+    seq_df['date'] = seq_df[target].dt.floor('D')
     for idx, row in seq_df.iterrows():
         if pd.isna(row[target]):
             for col in cols:
@@ -124,7 +127,7 @@ def build_circ_dict(seq_df, target, pre_days=3, post_days=3):
             date = row['date']
             pid = row['pid']
             wk = row['study_wk']
-            sel_df = build_circ_window(pid, wk, (date.floor('D') - pd.Timedelta(pre_days, unit='D')),                                      
+            sel_df = build_circ_window(pid, in_loc, (date.floor('D') - pd.Timedelta(pre_days, unit='D')),                                      
                                                 (date.floor('D') + pd.Timedelta(post_days, unit='D')))
             for col in cols:
                 if sel_df is not None:
@@ -234,7 +237,12 @@ if __name__ == '__main__':
         # TODO assumes seq DataFrame is already generated
         # source: location_aggregation.ipynb
         seq_df = pd.read_pickle(args.seq_df)    
-        circ_dict = build_circ_dict(seq_df, args.target, args.pre_days, args.post_days)
+        circ_dict = build_circ_dict(seq_df,
+                                    fus_in.format(args.in_loc),
+                                    args.target,
+                                    args.pre_days,
+                                    args.post_days)
+
         out_loc = circ_out.format(args.out_loc, 
                                   args.target,
                                   args.pre_days,
