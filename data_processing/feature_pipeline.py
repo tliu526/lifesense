@@ -148,13 +148,14 @@ def build_circ_dict(seq_df, in_loc, target, pre_days=3, post_days=3):
     return col_dict
 
 
-def build_fus_helper(pid, in_loc, start_date, end_date):
+def build_fus_helper(pid, wk, in_loc, start_date, end_date):
     """Builds fused location features within the given window.
 
     Assumes that the start_date and end_date fall within the given week.
     
     Args:
         - pid (str): the participant id
+        - wk (int): the study week
         - in_loc (str): the file path to the input fus location
         - start_date (str): start date, yyyy-mm-dd
         - end_date (str): end date, yyyy-mm-dd
@@ -173,10 +174,22 @@ def build_fus_helper(pid, in_loc, start_date, end_date):
     fus_df = fus_df[(fus_df['date'] >= start_date) & (fus_df['date'] <= end_date)]
     print(fus_df.shape)
     fus_df["is_wkday"] = (pd.to_datetime(fus_df['date']).dt.dayofweek < 5).astype(float)
-    
-    wkend_stats = lsu.process_fus_daily(fus_df[fus_df["is_wkday"] == 0].copy())
-    wkday_stats = lsu.process_fus_daily(fus_df[fus_df["is_wkday"] == 1].copy())
-    total_stats = lsu.process_fus_daily(fus_df.copy())
+
+    wkend_stats = None
+    wkday_stats = None
+    total_stats = None
+
+    sel_df = fus_df[fus_df["is_wkday"] == 0].copy()
+    if sel_df.shape[0] > 0:
+        wkend_stats = lsu.process_fus_daily(sel_df)
+
+    sel_df = fus_df[fus_df["is_wkday"] == 1].copy()
+    if sel_df.shape[0] > 0:
+        wkday_stats = lsu.process_fus_daily(sel_df)
+
+    sel_df = fus_df.copy()
+    if sel_df.shape[0] > 0:
+        total_stats = lsu.process_fus_daily(sel_df)
     
     dfs = []
     
@@ -200,7 +213,10 @@ def build_fus_helper(pid, in_loc, start_date, end_date):
         stats_df = pd.concat(dfs)
         stats_df = stats_df.to_frame().transpose()
         stats_df['pid'] = pid
-        #stats_df['study_wk'] = wk
+        stats_df['study_wk'] = wk
+
+    # TODO figure out why we're returning complex numbers
+    stats_df[stats_df.select_dtypes('complex128').columns] = stats_df.select_dtypes('complex128').astype(float)
 
     return stats_df
     
@@ -227,11 +243,12 @@ def process_fus(seq_df, target, in_loc, pre_days, post_days, out_loc, n_procs=4)
     for _, row in seq_df.iterrows():
         date = row['date']
         pid = row['pid']
+        wk = row['study_wk']
         
         start_date = date.floor('D') - pd.Timedelta(pre_days, unit='D')    
         end_date = date.floor('D') + pd.Timedelta(post_days, unit='D')
     
-        func_args.append((pid, in_loc, start_date, end_date))
+        func_args.append((pid, wk, in_loc, start_date, end_date))
 
     with Pool(n_procs) as pool:
         results = pool.starmap(build_fus_helper, func_args)
