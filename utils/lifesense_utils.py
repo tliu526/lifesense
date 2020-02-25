@@ -136,6 +136,9 @@ def process_fus_daily(fus, cluster_radius=0.2):
 
     """
     
+    if fus.shape[0]  < 1:
+        return None
+    
     # get stationary locations
     fus['prev_lat'] = fus['latitude'].shift()
     fus['prev_long'] = fus['longitude'].shift()
@@ -143,11 +146,11 @@ def process_fus_daily(fus, cluster_radius=0.2):
     fus['prev_timestamp'] = fus['timestamp'].shift()
     fus['delta_timestamp'] = ((fus['timestamp'] - fus['prev_timestamp']) / (60 * 60)).astype(float) # change to hours
     fus['velocity'] = fus['dist'] / fus['delta_timestamp']
-
     fus = fus[fus['velocity'] >= 0] # drop rows with negative velocities
     fus['stationary'] = fus['velocity'] < 1 # filter locations that have a speed of greater than 1 km/hr
     fus_stationary = fus[fus['stationary']]
     
+    #return fus, fus_stationary
 
     if fus_stationary.shape[0] < 1:
         return None
@@ -182,7 +185,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
     label_group = label_group.reset_index()
     
     fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
-    fus_combined = pd.merge(fus_combined, label_group[['date', 'entropy']], on='date', how='outer')
+    fus_combined = pd.merge(fus_combined, label_group[['date', 'entropy', 'norm_entropy']], on='date', how='outer')
     fus_combined['cluster'] = cur_clusters
     fus_combined['loc_var'] = loc_var
     
