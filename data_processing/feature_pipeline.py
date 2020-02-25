@@ -109,6 +109,16 @@ def build_circ_dict(seq_df, in_loc, target, pre_days=3, post_days=3):
     """Builds a (col, [vals]) dictionary for circ features.
     
     Has to be processed separately because circadean movement cannot be aggregated to daily values.
+
+    Args:
+        seq_df (pd.df): DataFrame holding survey dates
+        in_loc (str): the file location for the location df
+        target (str): the target date column
+        pre_days (int): the number of days to 'look back' from survey
+        post_days (int): the number of days to 'look forward' from survey
+
+    Returns:
+        circ_dict:  (pid, columns) k,v pairs
     """
     col_dict = {}
     
@@ -138,6 +148,101 @@ def build_circ_dict(seq_df, in_loc, target, pre_days=3, post_days=3):
     return col_dict
 
 
+def build_fus_helper(pid, in_loc, start_date, end_date):
+    """Builds fused location features within the given window.
+
+    Assumes that the start_date and end_date fall within the given week.
+    
+    Args:
+        - pid (str): the participant id
+        - in_loc (str): the file path to the input fus location
+        - start_date (str): start date, yyyy-mm-dd
+        - end_date (str): end date, yyyy-mm-dd
+        
+    Returns:
+        - stats_df (pd.DataFrame): frame with fused location statistics calculated for the given time window
+    """
+    
+    loc = "{}/{}.df".format(in_loc, pid)
+    fus_df = pd.read_pickle(loc)
+
+    if fus_df.shape[0] < 1:
+        return
+    
+    fus_df = lsu.format_raw_fus(fus_df)
+    fus_df = fus_df[(fus_df['date'] >= start_date) & (fus_df['date'] <= end_date)]
+    print(fus_df.shape)
+    fus_df["is_wkday"] = (pd.to_datetime(fus_df['date']).dt.dayofweek < 5).astype(float)
+    
+    wkend_stats = lsu.process_fus_daily(fus_df[fus_df["is_wkday"] == 0].copy())
+    wkday_stats = lsu.process_fus_daily(fus_df[fus_df["is_wkday"] == 1].copy())
+    total_stats = lsu.process_fus_daily(fus_df.copy())
+    
+    dfs = []
+    
+    if wkend_stats is not None:
+        wkend_stats = wkend_stats.set_index('pid')
+        wkend_stats = wkend_stats.add_suffix("_wkend")
+        dfs.append(wkend_stats.mean())
+    
+    if wkday_stats is not None:
+        wkday_stats = wkday_stats.set_index('pid')
+        wkday_stats = wkday_stats.add_suffix("_wkday")
+        dfs.append(wkday_stats.mean())
+    
+    if total_stats is not None:
+        total_stats = total_stats.set_index('pid')
+        total_stats = total_stats.add_suffix("_total")
+        dfs.append(total_stats.mean())
+    
+    stats_df = pd.DataFrame()
+    if len(dfs) > 0:
+        stats_df = pd.concat(dfs)
+        stats_df = stats_df.to_frame().transpose()
+        stats_df['pid'] = pid
+        #stats_df['study_wk'] = wk
+
+    return stats_df
+    
+
+def process_fus(seq_df, target, in_loc, pre_days, post_days, out_loc, n_procs=4):
+    """
+    Builds and dumps raw semantic location df
+    
+    Args:
+        seq_df (pd.df): DataFrame holding survey dates
+        target (str): the target date column
+        in_loc (str): the file location for the location df
+        out_loc (str): the file location for the target location df
+        pre_days (int): the number of days to 'look back' from survey
+        post_days (int): the number of days to 'look forward' from survey
+        n_procs (int): the number of processes to spin up
+
+    Returns:       
+        None, but writes to {out_loc}/fus_{target}_{pre_days}_{post_days}.df
+    """
+    fun_args = []
+
+    seq_df['date'] = seq_df[target].dt.floor('D')
+    for _, row in seq_df.iterrows():
+        date = row['date']
+        pid = row['pid']
+        
+        start_date = date.floor('D') - pd.Timedelta(pre_days, unit='D')    
+        end_date = date.floor('D') + pd.Timedelta(post_days, unit='D')
+    
+    fun_args.append((pid, in_loc, start_date, end_date))
+
+    with Pool(n_procs) as pool:
+        results = pool.starmap(build_fus_helper, func_args)
+
+    df = pd.DataFrame()
+
+    for res in results:
+        df = df.append(res)
+    
+    df.to_pickle(out_loc)
+
 if __name__ == '__main__':
     script_description = "Script for processing raw lifesense data into features"
     parser = argparse.ArgumentParser(description=script_description)
@@ -164,7 +269,7 @@ if __name__ == '__main__':
     parser.add_argument('--sloc', action='store_true', 
                         help="process semantic location features (requires raw sloc to be processed)")
     parser.add_argument('--fus', action='store_true', 
-                        help="process fused location features")
+                        help="process fused location features (requires seq_df, target, pre/post days)")
     parser.add_argument('--circ', action='store_true', 
                         help="process circadean rhythm features (requires seq_df, target, pre/post days)")
     parser.add_argument('--seq_df', help='seq_df DataFrame location')
@@ -180,7 +285,7 @@ if __name__ == '__main__':
     sms_in = "{}/pdk-text-messages/"
     sloc_in = "{}/semantic-location/"
 
-    fus_out = "{}/fus_daily.df"
+    fus_out = "{}/fus_{}_{}_{}.df"
     circ_out = "{}/circ_movt.df"
     fga_out = "{}/fga_hr.df"
     cal_out = "{}/cal_hr.df"
@@ -250,7 +355,19 @@ if __name__ == '__main__':
         pickle.dump(circ_dict, open(out_loc, 'wb'), -1)
 
     if args.fus:
-        pass
+        seq_df = pd.read_pickle(args.seq_df)
+
+        out_loc = fus_out.format(args.out_loc, 
+                                  args.target,
+                                  args.pre_days,
+                                  args.post_days)
+
+        process_fus(seq_df, args.target, 
+                    fus_in.format(args.in_loc),
+                    args.pre_days, 
+                    args.post_days, 
+                    out_loc, args.n_procs)
+
 
     for tup in process_args:
         process_sensor_data(*tup)
