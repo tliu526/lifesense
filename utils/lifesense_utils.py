@@ -443,7 +443,7 @@ sloc_map = {
     "Gym/Exercise" : "exercise",
     "Another Person's Home" : "anothers_home",
     "Place of Worship (Church, Temple, Etc.)" : "religion",
-    "Commute/Travel" : "travel",
+    "Commute/Travel (Airport, Bus Stop, Train Station, Etc.)" : "travel",
     "Shopping" : "shopping",
     "Errand" : "errand",
     "Medical/Dentist/Mental Health" : "health",
