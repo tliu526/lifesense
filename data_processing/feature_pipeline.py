@@ -221,7 +221,7 @@ def process_fus(seq_df, target, in_loc, pre_days, post_days, out_loc, n_procs=4)
     Returns:       
         None, but writes to {out_loc}/fus_{target}_{pre_days}_{post_days}.df
     """
-    fun_args = []
+    func_args = []
 
     seq_df['date'] = seq_df[target].dt.floor('D')
     for _, row in seq_df.iterrows():
@@ -231,7 +231,7 @@ def process_fus(seq_df, target, in_loc, pre_days, post_days, out_loc, n_procs=4)
         start_date = date.floor('D') - pd.Timedelta(pre_days, unit='D')    
         end_date = date.floor('D') + pd.Timedelta(post_days, unit='D')
     
-    fun_args.append((pid, in_loc, start_date, end_date))
+        func_args.append((pid, in_loc, start_date, end_date))
 
     with Pool(n_procs) as pool:
         results = pool.starmap(build_fus_helper, func_args)
