@@ -159,9 +159,9 @@ def process_fus_daily(fus, cluster_radius=0.2):
     loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
 
     # assign clusters
-    cur_mean = 1
+    cur_max = 1
     cur_clusters = 0
-    while cur_mean > cluster_radius:
+    while cur_max > cluster_radius:
         cur_clusters += 1
         X = fus_stationary[['latitude', 'longitude']]
         kmeans = KMeans(n_clusters=cur_clusters, random_state=0).fit(X)
@@ -171,7 +171,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
         X['labels'] = labels
         X['center'] = X.apply(lambda x: clusters[int(x.labels)], axis=1)
         X['dist'] = X.apply(lambda x: haversine((x.latitude, x.longitude), x.center), axis=1)
-        cur_mean = X['dist'].mean()
+        cur_max = X['dist'].max()
     
     # get daily entropy
     fus_stationary = fus_stationary.reset_index(drop=True)
@@ -182,6 +182,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
     label_group = label_group.div(label_group['total'], axis=0)
     label_group['entropy'] = -(np.log(label_group) * label_group).sum(axis=1)
     label_group['norm_entropy'] = label_group['entropy'] / np.log(cur_clusters) # entropy normalized by number of location clusters
+    label_group['norm_entropy'] = label_group['norm_entropy'].fillna(0) # fill divide by 0 with 0, as this corresponds to no location variance
     label_group = label_group.reset_index()
     
     fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
