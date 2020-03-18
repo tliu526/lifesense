@@ -479,13 +479,18 @@ def process_transition_hr(time, sloc_group):
         next_time = row['time']
         if next_loc is not cur_loc:
             num_transitions += 1
-            transition_dict[cur_loc + '_dur'] += (next_time - cur_time).total_seconds()
+            # TODO temporary fix for random timezone jumps
+            total_change_secs = (next_time - cur_time).total_seconds()
+            if total_change_secs > 0:
+                transition_dict[cur_loc + '_dur'] += total_change_secs
             transition_dict[cur_loc + '_' + next_loc] += 1
             cur_loc = next_loc
             cur_time = next_time
     
     # at the bottom of the hour
-    transition_dict[cur_loc + '_dur'] += ((time + pd.Timedelta(1, unit='h')) - cur_time).total_seconds()
+    total_change_secs = ((time + pd.Timedelta(1, unit='h')) - cur_time).total_seconds()
+    if total_change_secs > 0:
+        transition_dict[cur_loc + '_dur'] += total_change_secs
     
     transition_dict['tot_tansitions'] = num_transitions
     #print(transition_dict)
