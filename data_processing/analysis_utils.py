@@ -7,6 +7,7 @@ Moves correlation analysis present in lifesense_cluster_change_over_time and jam
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import pingouin as pg
 import seaborn as sns
 
 from sklearn.decomposition import PCA, FactorAnalysis
@@ -107,6 +108,14 @@ def get_var_explained(transformer):
     return var_df
 
 
+def plot_cluster_scatter(x, y, df, cluster, figsize):
+    """Plots scatter plot for given cluster and columns"""
+    sel_df = df[df['baseline_cluster'] == cluster]
+    _, ax = plt.subplots(figsize=figsize)
+    sns.regplot(x=x, y=y, data=sel_df, ax=ax, y_jitter=0.5, scatter_kws={'alpha':0.3})
+    plt.title("{}: {} vs {}".format(cluster, x, y))
+
+
 def generate_decomp_features(feat_df, feat_cols, id_cols, n_comps, agg_name, method="pca", suffix="agg", random_state=0):
     """Generates aggregate decomp features for the given columns. 
 
@@ -141,15 +150,22 @@ def generate_decomp_features(feat_df, feat_cols, id_cols, n_comps, agg_name, met
 
     decomp_cols = ["{}_{}{}_{}".format(agg_name, method, i, suffix) for i in range(1, n_comps + 1)]
     decomp_df = pd.DataFrame(transformed_features, columns=decomp_cols)
-    
- 
     decomp_df = pd.concat([feat_df[id_cols], decomp_df], axis=1)
 
     return decomp_df, transformer
 
-def generate_unit_features(feat_df, include_cols):
-    """
+def generate_unit_weight_features(feat_df, feat_cols, id_cols, agg_name):
+    """Generates aggregate unit weighted features for the given columns. 
 
+    Standardizes columns before unit weighting the given features.
+
+    Params:
+        feat_df (pd.DataFrame): feature frame to perform PCA across
+        feat_cols (list): a list of columns to generate decomposition
+        id_cols (list): a list of columns for Pandas merge indexing
+        agg_name (str): the aggregate column name
+    Returns:
+        pd.DataFrame: aggregated columns with id_cols present
     """
     pass
 
@@ -211,19 +227,59 @@ def generate_corr_analysis():
     pass
 
 
-# test bed
-#%%
-test_df = pd.read_pickle("~/lifesense/dig_state_df_test.df")
-display(test_df.head())
-fga_cols = ['katana', 'orca', 'messaging', 'email', 'instagram', 'youtube', 'maps', 'snapchat', 'browser', 'chrome']
-df, transformer = generate_decomp_features(test_df, fga_cols, ['pid', 'study_wk'], 5, 'fga')
-display(df.head())
-print(df.shape)
-plot_decomp_components(transformer, 5, fga_cols, "PCA of App Features")
-display(df.tail())
+def build_corr_table(df, x, cols, target, title, method='pearson', groups=['all', 'no_symp', 'soc_anx', 'gen_anx', 'dep_anx']):
+    """Builds a concise correlation table for the given feature target across all subgroups."""
+    table = pd.DataFrame()
+
+    for group in groups:
+        if group == 'all':
+            sel_df = df
+        else:
+            sel_df = df[df['baseline_cluster']  == group]
+        corr_df = pg.pairwise_corr(sel_df, columns=[cols, [target]], nan_policy='pairwise', padjust="fdr_bh", method=method)
+        corr_df['group'] = group
+        #print(corr_df.head())
+        corr_df = corr_df[corr_df['X'] == x]
+        table = table.append(corr_df[['group', 'n', 'r', 'p-corr', 'p-adjust']])
+        
+    table = table.reset_index(drop=True)
+        
+    return table.style.set_caption(title)
+
+
+def display_all_corr(corr_df, cols, target, alpha=0.1, method="pearson"):
+    """Displays all correlations for every feature in cols against target. 
+    
+    Sorts by feature group.
+    Also stars the significant p-values.
+    
+    Args:
+        corr_df (pd.df): pandas correlation frame
+        cols (list): list of feature columns
+        target (str): the target survey column name
+        alpha (float): the specified significance level
+        method (str): whether "pearson" or "spearman" correlations
+    
+    Returns:
+        pd.df: styled correlation matrix
+    
+    """
+    p_val_format = "{:0.4f}"
+    style_p_val = lambda x: "{:0.4f}".format(x) + "*" if x < alpha else "{:0.4f}".format(x)
+    pair_corr_df = pg.pairwise_corr(corr_df, columns=[cols, [target]], method=method, padjust="fdr_bh")
+    pair_corr_df['p-corr'] = pair_corr_df['p-corr'].apply(style_p_val)
+    pair_corr_df['p-unc'] = pair_corr_df['p-unc'].apply(style_p_val)
+
+    title = method + ", alpha < {}".format(alpha)
+    display(pair_corr_df[['X', 'Y', 'n', 'r', 'p-unc', 'p-corr', 'p-adjust']].style.set_caption(title))
+
 
 if __name__ == '__main__':
-    pass
-
-
-# %%
+    test_df = pd.read_pickle("~/lifesense/dig_state_df_test.df")
+    display(test_df.head())
+    fga_cols = ['katana', 'orca', 'messaging', 'email', 'instagram', 'youtube', 'maps', 'snapchat', 'browser', 'chrome']
+    df, transformer = generate_decomp_features(test_df, fga_cols, ['pid', 'study_wk'], 5, 'fga', method='factor')
+    display(df.head())
+    print(df.shape)
+    plot_decomp_components(transformer, 5, fga_cols, "PCA of App Features")
+    display(df.tail())
