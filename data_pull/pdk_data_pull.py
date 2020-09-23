@@ -13,6 +13,8 @@ import time
 
 import numpy as np
 import pandas as pd
+from pandas.io.json import json_normalize
+
 from requests.exceptions import HTTPError
 
 from pdk_client import PDKClient
@@ -33,7 +35,7 @@ def try_query(pid):
         try:
             query = client.query_data_points(page_size=PAGE_SIZE, source=pid)
             return query
-        except Exception as e:
+        except HTTPError as e:
             if retries > 10:
                 raise e
             print(e)
@@ -53,7 +55,7 @@ def try_filter(query, pid, gen_id, start_date, end_date):
                          created__gte=start_date,
                          created__lte=end_date).order_by('created')
             return q_filter
-        except Exception as e:
+        except HTTPError as e:
             if retries > 10:
                 raise e
             print(e)
@@ -97,16 +99,22 @@ def process_generators(pid, generators, data_source, out_loc, start_date, end_da
         frac = int(tot_count / 100)
         ema_df = pd.DataFrame()
         for point in ema_query:
+            point_df = json_normalize(point)   
+            point_df.columns = point_df.columns.str.replace("passive-data-metadata.", "", regex=False)
+            
+            """
             point_df = pd.DataFrame.from_dict(point).iloc[0].to_frame().transpose()
             metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
+
             point_df.reset_index(inplace=True, drop=True)
             point_df = pd.concat([metadata_df, point_df], axis=1, sort=True)
             
             point_df.drop('passive-data-metadata', axis='columns', inplace=True)
+            """
 
             ema_df = ema_df.append(point_df)
             count += 1
-            if debug and dd(count % frac == 0):
+            if debug and (count % frac == 0):
                 print("{0:.2f}% complete".format(float(count)/float(tot_count)*100))
 
         ema_df['pid'] = pid 
@@ -146,7 +154,8 @@ def process_location(pid, data_source, out_loc, start_date, end_date, debug=Fals
     for point in location_query:
         point_df = pd.DataFrame.from_dict(point).iloc[0].to_frame().transpose()
         metadata_df = pd.Series(point['passive-data-metadata']).to_frame().transpose()
-        metadata_df = metadata_df.drop(['latitude', 'longitude'], axis='columns')
+        # TODO check if ignoring errors is safe
+        metadata_df = metadata_df.drop(['latitude', 'longitude'], axis='columns', errors="ignore")
         point_df.reset_index(inplace=True, drop=True)
         point_df = pd.concat([metadata_df, point_df], axis=1, sort=True)
         
@@ -172,6 +181,7 @@ def process_location(pid, data_source, out_loc, start_date, end_date, debug=Fals
 if __name__ == '__main__':
     script_description = "Process PDK sensors and dumps them to a Pandas dataframe."
     parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
+    
     parser.add_argument('id_file', type=str, help="a file containing participant ids, separated by newlines")
     parser.add_argument('sensor_file', type=str, help="a file containing sensors to pull, separated by newlines")
     parser.add_argument('data_source', type=str, help="the data source name (e.g. wave1, wave2)")
@@ -180,7 +190,7 @@ if __name__ == '__main__':
 
     parser.add_argument('out_loc', type=str, help="the output directory location")
     parser.add_argument('num_procs', type=int, default=2, help="the number of processes to allocate (default 2)")
-    
+    parser.add_argument('--debug', action='store_true', help="Whether to run in debug mode")
     # TODO parameterize
     #parser.add_argument('pdk_token', type=str, help="PDK token for accessing data")
     #parser.add_argument('start_date', type=str, help="the start date for parsing data (yyyy-mm-dd format)")
@@ -204,6 +214,7 @@ if __name__ == '__main__':
                                   out_loc=args.out_loc,
                                   start_date=args.start_date,
                                   end_date=args.end_date,
+                                  debug=args.debug
                                   )
 
     # bug in Python 2.7.x multiprocessing requires hack for graceful keyboard interrupt

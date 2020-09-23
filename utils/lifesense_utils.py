@@ -1,5 +1,7 @@
 """
-Utilities for processing lifesense data files.
+Utilities for LifeSense feature processing.
+
+Previously located in utils/lifesense_utils.py for early analyses.
 """
 
 import pandas as pd
@@ -133,7 +135,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
 
     Args:
         fus (pd.DataFrame): the fused location df with latitude, longitude, date, and pid columns
-
+        cluster_radius (float): the adaptive k-means max cluster radius in km
     """
     
     if fus.shape[0]  < 1:
@@ -159,9 +161,9 @@ def process_fus_daily(fus, cluster_radius=0.2):
     loc_var = np.log(fus_stationary['latitude'].var() + fus_stationary['longitude'].var())
 
     # assign clusters
-    cur_mean = 1
+    cur_max = 1
     cur_clusters = 0
-    while cur_mean > cluster_radius:
+    while cur_max > cluster_radius:
         cur_clusters += 1
         X = fus_stationary[['latitude', 'longitude']]
         kmeans = KMeans(n_clusters=cur_clusters, random_state=0).fit(X)
@@ -171,7 +173,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
         X['labels'] = labels
         X['center'] = X.apply(lambda x: clusters[int(x.labels)], axis=1)
         X['dist'] = X.apply(lambda x: haversine((x.latitude, x.longitude), x.center), axis=1)
-        cur_mean = X['dist'].mean()
+        cur_max = X['dist'].max()
     
     # get daily entropy
     fus_stationary = fus_stationary.reset_index(drop=True)
@@ -182,6 +184,7 @@ def process_fus_daily(fus, cluster_radius=0.2):
     label_group = label_group.div(label_group['total'], axis=0)
     label_group['entropy'] = -(np.log(label_group) * label_group).sum(axis=1)
     label_group['norm_entropy'] = label_group['entropy'] / np.log(cur_clusters) # entropy normalized by number of location clusters
+    label_group['norm_entropy'] = label_group['norm_entropy'].fillna(0) # fill divide by 0 with 0, as this corresponds to zero location variance
     label_group = label_group.reset_index()
     
     fus_combined = fus.groupby(['pid', 'date'], as_index=False)['dist'].sum()
@@ -213,6 +216,7 @@ def format_raw_fus(fus):
     
     final_fus = fus
     final_fus['timestamp'] = final_fus['adj_ts']
+    final_fus = final_fus.drop_duplicates('timestamp')
     
     return final_fus[['pid', 'longitude', 'latitude', 'timestamp', 'date']]
     
@@ -406,6 +410,7 @@ def tag_semantic_locs(pid, sloc_df, file_loc, cluster_rad=500):
     """
     print(pid)
     loc_df = pd.read_pickle("{}/{}.df".format(file_loc, pid))
+
     if loc_df.shape[0] < 1:
         return 
     loc_df = format_time(loc_df)
@@ -478,13 +483,19 @@ def process_transition_hr(time, sloc_group):
         next_time = row['time']
         if next_loc is not cur_loc:
             num_transitions += 1
-            transition_dict[cur_loc + '_dur'] += (next_time - cur_time).total_seconds()
+            # TODO temporary fix for erroneous timezone jumps
+            total_change_secs = (next_time - cur_time).total_seconds()
+            if total_change_secs > 0:
+                transition_dict[cur_loc + '_dur'] += total_change_secs
             transition_dict[cur_loc + '_' + next_loc] += 1
             cur_loc = next_loc
             cur_time = next_time
     
     # at the bottom of the hour
-    transition_dict[cur_loc + '_dur'] += ((time + pd.Timedelta(1, unit='h')) - cur_time).total_seconds()
+    total_change_secs = ((time + pd.Timedelta(1, unit='h')) - cur_time).total_seconds()
+
+    if total_change_secs > 0:
+        transition_dict[cur_loc + '_dur'] += total_change_secs
     
     transition_dict['tot_tansitions'] = num_transitions
     #print(transition_dict)

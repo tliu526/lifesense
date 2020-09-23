@@ -1,177 +1,89 @@
-#%% [markdown] 
-# Script for aggregating the raw data. 
-# Only needs to be run once due to chunking of raw data pulls, not part of 
-# general pipeline.
-
+"""
+Script for aggregating the raw data. Step 1 for incremental updates of phone sensor data
+"""
 #%% imports
+import argparse
+import multiprocessing
+import os
 import pandas as pd
 import pickle
 
-#%% constants
-target_loc = "/data/tliu/wave1"
-id_loc = "/home/tliu/lifesense/data_pull/ids/wave1_ids.txt"
-sensors_loc = "/home/tliu/lifesense/wave1_sensors.txt"
+#%% merge_all function
+def merge_all(pid, generator, in_loc, debug=False):
+    """Merges all files for the specified pid and generator at the specified in_loc.
 
-wave1_ids = []
-with open(id_loc, "r") as ids_f:
-    for line in ids_f.readlines():
-        wave1_ids.append(line.strip())
-
-sensors = []
-with open(sensors_loc, "r") as sensors_f:
-    for line in sensors_f.readlines():
-        sensors.append(line.strip())
-
-print(len(wave1_ids))
-print(wave1_ids)
-print(sensors)
-
-#%% check the "lifesense data directory"
-test_id = "00746649"
-
-def format_time(df):
-    """
-    Takes timestamp and timezone-offset to create time columns.
+    Merges over all sub-directories found in the in_loc directory.
 
     Args:
-        df (pd.DataFrame)
-
+        pid (str): participant id
+        generator (str): sensor generator to target
+        in_loc (str): the file directory to pull data from
     Returns:
-        df with adjusted time columns:
-            - adj_ts: timestamp (s) with offset
-            - time: adjusted time
-            - date: adjusted time, day 
-            - hour: adjusted time, hour
+        pd.df: aggregated DataFrame for everything in the given folder location
     """
-    df['timestamp'] = df['timestamp'].astype(int)
-    df['timezone-offset'] = df['timezone-offset'].astype(int)
+    combined_df = pd.DataFrame()
+    subdirs = sorted(os.listdir(in_loc))
 
-    df['adj_ts'] = df['timestamp'] + df['timezone-offset']
-    df['time'] = pd.to_datetime(df['adj_ts'], unit='s')
-    df['date'] = pd.to_datetime(df['adj_ts'], unit='s').dt.round('d')
-    df['hour'] = pd.to_datetime(df['adj_ts'], unit='s').dt.floor('H')
-    
-    return df
+    gen_path = in_loc + "/{}/{}/{}.df"
 
-#%%
-test_loc = pd.read_pickle("/home/tliu/lifesense/data_pull/pdk-location/{}.df".format(test_id))
-test_loc = format_time(test_loc)
-test_loc['timestamp'].tail(10)
-
-#%%
-test_loc = pd.read_pickle("/data/tliu/wk4_ls_data/pdk-location/{}.df".format(test_id))
-test_loc = format_time(test_loc)
-test_loc['timestamp'].head(10)
-
-#%% [markdown]
-# Steps to aggregate data:
-# 1. Pull from "data_pull" directories, exclude the overlap in dates
-# 2. append all data sources, including the gaps
-# 3. reindex and sort by timestamp
-
-#%% Merge data pull and wk 4 data
-wk1_loc = pd.read_pickle("/home/tliu/lifesense/data_pull/pdk-location/{}.df".format(test_id))
-wk4_loc = pd.read_pickle("/data/tliu/wk4_ls_data/pdk-location/{}.df".format(test_id))
-
-wk1_loc['source'] = 'wk1'
-wk4_loc['source'] = 'wk4'
-
-min_timestamp = wk4_loc['timestamp'].min()
-wk1_loc = wk1_loc[wk1_loc['timestamp'] < min_timestamp]
-
-combined_loc = wk1_loc.append(wk4_loc)
-combined_loc = combined_loc.reset_index(drop=True)
-combined_loc = combined_loc.sort_values(by='timestamp')
-combined_loc.shape
-
-#%% merge wk1 wk4 function
-def merge_wk1_wk4(pid, generator):
-
-    wk1_path = "/home/tliu/lifesense/data_pull/{}/{}.df".format(generator, pid)
-    wk4_path = "/data/tliu/wk4_ls_data/{}/{}.df".format(generator, pid)
-
-    wk1_df = pd.read_pickle(wk1_path)
-    wk4_df = pd.read_pickle(wk4_path)
-    combined_df = wk1_df 
-    if combined_df.shape[0] > 0:
-        if wk4_df.shape[0] > 0:
-            min_timestamp = wk4_df['timestamp'].min()
-            wk1_df = wk1_df[wk1_df['timestamp'] < min_timestamp]
-
-            combined_df = wk1_df.append(wk4_df)
-            combined_df = combined_df.sort_values(by='timestamp')
-    return combined_df
-
-test = merge_wk1_wk4(test_id, 'pdk-location')
-test.shape
-
-#%% check gaps
-test_gap = pd.read_pickle("/data/tliu/gaps/wk4/pdk-location/{}.df".format(test_id))
-test_gap['source'] = 'wk4_gap'
-gap_min = test_gap['timestamp'].min()
-gap_max = test_gap['timestamp'].max()
-
-wk7_loc = pd.read_pickle("/data/tliu/wk7_ls_data/pdk-location/{}.df".format(test_id))
-wk7_loc['source'] = 'wk7'
-combined_loc = combined_loc.append(test_gap)
-combined_loc = combined_loc.append(wk7_loc)
-combined_loc = combined_loc.sort_values(by=['timestamp'])
-combined_loc = combined_loc.reset_index(drop=True)
-
-min_idx = combined_loc.index[combined_loc['timestamp'] == gap_min].tolist()[0]
-max_idx = combined_loc.index[combined_loc['timestamp'] == gap_max].tolist()[0]
-
-#display(combined_loc.loc[min_idx-5:, ['timestamp', 'source']])
-#display(combined_loc.loc[max_idx-5:, ['timestamp', 'source']])
-# Gaps look to be filled properly, with no overlap
-
-#%% merge_all function
-def merge_all(pid, generator):
-    combined_df = merge_wk1_wk4(pid, generator)
-
-    gap_path = "/data/tliu/gaps/wk{}/{}/{}.df"
-    wk_path = "/data/tliu/wk{}_ls_data/{}/{}.df"
-    
-    # merge wk 4 gaps
-    wk4_gaps = pd.read_pickle(gap_path.format(4, generator, pid))
-    combined_df = combined_df.append(wk4_gaps)
-
-    remaining_wks = [7,10,13,16]
-    for wk in remaining_wks:
-        wk_df = pd.read_pickle(wk_path.format(wk, generator, pid))
-        if wk_df.shape[0] > 0:
-            combined_df = combined_df.append(wk_df)
-
-        gap_df = pd.read_pickle(gap_path.format(wk, generator, pid))
-        if gap_df.shape[0] > 0:
-            combined_df = combined_df.append(gap_df)    
+    for subdir in subdirs:        
+        file_loc = gen_path.format(subdir, generator, pid)
+        if debug: print(file_loc)
+        if os.path.isfile(file_loc):
+            df = pd.read_pickle(file_loc)
+            if debug: print(df.shape)
+            if df.shape[0] > 0:
+                combined_df = combined_df.append(df)
 
     combined_df = combined_df.reset_index(drop=True)
+    if debug: print("Final size:" + str(combined_df.shape))
     return combined_df
 
-#%% test dumping to file
-"""
-for pid in wave1_ids[:1]:
-    print(pid)
-    for generator in sensors:
-        print(generator)
-        df = merge_all(pid, generator)
-        write_path = target_loc + "/{}/{}.df".format(generator, pid)
-        df.to_pickle(write_path)
-"""
 
-#%% final function
-def aggregate_sensors(pid):
+def aggregate_sensors(pid, sensors, in_loc, out_loc, debug=False):
     print(pid)
     for generator in sensors:
-        df = merge_all(pid, generator)
-        write_path = target_loc + "/{}/{}.df".format(generator, pid)
+        df = merge_all(pid, generator, in_loc, debug)
+        write_path = out_loc + "/{}/{}.df".format(generator, pid)
         df.to_pickle(write_path)
+
 
 if __name__ == '__main__':
-    from multiprocessing import Pool
-    with Pool(processes=4) as pool:
-        pool.map(aggregate_sensors, wave1_ids)
+    script_description = "Aggregates incremental data found in in_loc and dumps to out_loc"
+    parser = argparse.ArgumentParser(description=script_description, formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument('in_loc', type=str,
+                        help='input location')
+    parser.add_argument('out_loc', type=str, 
+                        help='output location')
+    parser.add_argument('id_file', type=str, 
+                        help="file containing participant ids, newline delimited")
+    parser.add_argument('sensor_file', type=str, 
+                        help="a file containing sensors to pull, separated by newlines")
+    parser.add_argument('n_procs', type=int, default=2, 
+                        help="the number of processes to allocate (default 2)")
+    
+    # TODO integrate these eventually?
+    #parser.add_argument('start_date', type=str, help="the start date (inclusive) for parsing data (yyyy-mm-dd format)")
+    #parser.add_argument('end_date', type=str, help="the end date (exclusive) for parsing data (yyyy-mm-dd format)")
+    parser.add_argument('--debug', action='store_true', help="Whether to run in debug mode")
+
+    args = parser.parse_args()
+
+    pids = []
+    with open(args.id_file, "r") as wave_f:
+        for line in wave_f.readlines():
+            pids.append(line.strip())
+
+    sensors = []
+    with open(args.sensor_file, "r") as sensor_f:
+        for line in sensor_f.readlines():
+            sensors.append(line.strip())
+
+    f_args = [(pid, sensors, args.in_loc, args.out_loc, args.debug) for pid in pids]
+
+    with multiprocessing.Pool(args.n_procs) as pool:
+        pool.starmap(aggregate_sensors, f_args)
 
 
 
